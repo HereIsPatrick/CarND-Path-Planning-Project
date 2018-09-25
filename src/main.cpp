@@ -192,9 +192,17 @@ int main() {
 		map_waypoints_dy.push_back(d_y);
 	}
 
-	h.onMessage([&map_waypoints_x, &map_waypoints_y, &map_waypoints_s, &map_waypoints_dx, &map_waypoints_dy](
-			uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
-			uWS::OpCode opCode) {
+    // Car's lane. Starting at middle lane.
+    int lane = 1;
+
+    // Reference velocity.
+    double ref_vel = 0.0; // mph
+
+    h.onMessage([&ref_vel, &lane, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy]
+                        (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+
+
+
 		// "42" at the start of the message means there's a websocket message event.
 		// The 4 signifies a websocket message
 		// The 2 signifies a websocket event
@@ -230,35 +238,208 @@ int main() {
 					// Sensor Fusion Data, a list of all other cars on the same side of the road.
 					auto sensor_fusion = j[1]["sensor_fusion"];
 
-					json msgJson;
+                    // Provided previous path point size.
+                    int prev_size = previous_path_x.size();
 
+                    // Preventing collitions.
+                    if (prev_size > 0) {
+                        car_s = end_path_s;
+                    }
+
+                    // ** Prediction **
+                    bool is_vehicle_ahead_occupy = false;
+                    bool is_vehicle_left_occupy = false;
+                    bool is_vehicle_right_occupy = false;
+
+                    //std::cout << "vehicles : " << sensor_fusion.size() << std::endl;
+                    for ( int i = 0; i < sensor_fusion.size(); i++ ) {
+                        float d = sensor_fusion[i][6];
+                        int vehicle_lane = -1;
+
+                        if ( d >= 0 && d < 4 ) {
+                            vehicle_lane = 0;
+                        }
+                        else if ( d >= 4 && d < 8 ) {
+                            vehicle_lane = 1;
+                        }
+                        else if ( d >= 8 && d < 12 ) {
+                            vehicle_lane = 2;
+                        }
+
+                        if (vehicle_lane == -1) {
+                            continue;
+                        }
+                        // Calculate vehicle speed.
+                        double vx = sensor_fusion[i][3];
+                        double vy = sensor_fusion[i][4];
+                        double vehicle_speed = sqrt(vx*vx + vy*vy);
+                        double check_vehicle_s = sensor_fusion[i][5];
+
+                        // Step. show all vehicles in 30meters.
+/*                        if( abs(check_vehicle_s-car_s)<30 )
+                        {
+                            std::cout << "Vehicle:" << sensor_fusion[i][0] << " lane:" << vehicle_lane << " s:" << check_vehicle_s << (check_vehicle_s-car_s>0?" F":" B") << std::endl;
+                        }*/
+
+                        // if using previous points can project s.
+                        // Calculte the vehicle s
+                        check_vehicle_s += ((double)prev_size*0.02*vehicle_speed);
+
+                        // Step. Is ahead occupy?
+                        if ( vehicle_lane == lane ) {
+                            // vehicle in our lane.
+                            is_vehicle_ahead_occupy |= check_vehicle_s > car_s && check_vehicle_s - car_s < 30;
+                        }
+                        // Step . Is left occupy?
+                        if ( vehicle_lane - lane == -1 ) {
+                            // Vehicle left
+                            //is_vehicle_left_occupy |= (car_s - 30 < check_vehicle_s) && (car_s + 30 > check_vehicle_s); // safety turn left
+                            is_vehicle_left_occupy |= (car_s - 5 < check_vehicle_s) && (car_s + 30 > check_vehicle_s); // Aggressive turn left
+                        }
+                        // Step . Is right occupy?
+                        if ( vehicle_lane - lane == 1 ) {
+                            // Vehicle right
+                            //is_vehicle_right_occupy |= (car_s - 30 < check_vehicle_s) && (car_s + 30 > check_vehicle_s); // safety turn right
+                            is_vehicle_right_occupy |= (car_s - 5 < check_vehicle_s) && (car_s + 30 > check_vehicle_s); // Aggressive turn right
+                        }
+                    }
+
+
+                    // ** Behavior **
+                    double delta_speed = 0;
+                    const double MAX_SPEED = 49.5;
+                    const double MAX_ACC = .224;
+                    if ( is_vehicle_ahead_occupy ) {
+                        // pass
+                        if ( !is_vehicle_left_occupy && lane > 0 ) {
+                            // If left lane no car, go left
+                            lane--;
+                        } else if ( !is_vehicle_right_occupy && lane != 2 ){
+                            // If right lane no car, go right
+                            lane++;
+                        } else {
+                            // Decrease speed.
+                            delta_speed -= MAX_ACC;
+                        }
+                    } else {
+                        // Increase speed, if not max speed.
+                        if ( ref_vel < MAX_SPEED ) {
+                            delta_speed += MAX_ACC;
+                        }
+                    }
+
+                    // ** Trajectory **
+                    vector<double> ptsx;
+                    vector<double> ptsy;
+
+                    double ref_x = car_x;
+                    double ref_y = car_y;
+                    double ref_yaw = deg2rad(car_yaw);
+
+                    // Step. Generate 2 previous points if we don't have it.
+                    if ( prev_size < 2 ) {
+                        double prev_car_x = car_x - cos(car_yaw);
+                        double prev_car_y = car_y - sin(car_yaw);
+
+                        ptsx.push_back(prev_car_x);
+                        ptsx.push_back(car_x);
+
+                        ptsy.push_back(prev_car_y);
+                        ptsy.push_back(car_y);
+                    } else {
+                        // If we have previous points, we use the last two point.
+                        ref_x = previous_path_x[prev_size - 1];
+                        ref_y = previous_path_y[prev_size - 1];
+
+                        double ref_x_prev = previous_path_x[prev_size - 2];
+                        double ref_y_prev = previous_path_y[prev_size - 2];
+                        ref_yaw = atan2(ref_y-ref_y_prev, ref_x-ref_x_prev);
+
+                        ptsx.push_back(ref_x_prev);
+                        ptsx.push_back(ref_x);
+
+                        ptsy.push_back(ref_y_prev);
+                        ptsy.push_back(ref_y);
+                    }
+
+                    // Step. Create 3 points for future lane
+                    vector<double> next_wp0 = getXY(car_s + 30, 2 + 4*lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+                    vector<double> next_wp1 = getXY(car_s + 60, 2 + 4*lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+                    vector<double> next_wp2 = getXY(car_s + 90, 2 + 4*lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+
+                    ptsx.push_back(next_wp0[0]);
+                    ptsx.push_back(next_wp1[0]);
+                    ptsx.push_back(next_wp2[0]);
+
+                    ptsy.push_back(next_wp0[1]);
+                    ptsy.push_back(next_wp1[1]);
+                    ptsy.push_back(next_wp2[1]);
+                    // Until now, we had 5 points to generate trajectory.
+
+
+                    // Step. translate global coordinates to local coordinates.
+                    for ( int i = 0; i < ptsx.size(); i++ ) {
+                        double shift_x = ptsx[i] - ref_x;
+                        double shift_y = ptsy[i] - ref_y;
+
+                        ptsx[i] = shift_x * cos(0 - ref_yaw) - shift_y * sin(0 - ref_yaw);
+                        ptsy[i] = shift_x * sin(0 - ref_yaw) + shift_y * cos(0 - ref_yaw);
+                    }
+
+                    // Step . create spline.
+                    tk::spline s;
+                    s.set_points(ptsx, ptsy);
+
+                    // Step. Fill path points from previous path for continuity.
 					vector<double> next_x_vals;
 					vector<double> next_y_vals;
+                    for ( int i = 0; i < prev_size; i++ ) {
+                        next_x_vals.push_back(previous_path_x[i]);
+                        next_y_vals.push_back(previous_path_y[i]);
+                    }
 
+                    // Step. Calculate y on 30 meters ahead.
+                    double target_x = 30.0;
+                    double target_y = s(target_x);
+                    double target_dist = sqrt((target_x)*(target_x) + (target_y)*(target_y));
 
-					// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
-					// Start
-					double dist_inc = 0.5;
-					for(int i = 0; i < 50; i++)
-					{
-					    double next_s = car_s+(i+1)*dist_inc;
-					    double next_d = 6;
-					    if(car_s>300)
-					        next_d=2;
-                        if(car_s>500)
-                            next_d=10;
-                        if(car_s>600)
-                            next_d=6;
+                    double x_add_on = 0;
 
-                        std::cout << car_s << std::endl;
+                    // Step . Generate new points to fill the trajectory
+                    for( int i = 1; i < 50 - prev_size; i++ ) {
+                        ref_vel += delta_speed; // 速度慢慢的加起來
+                        if ( ref_vel > MAX_SPEED ) {
+                            ref_vel = MAX_SPEED;
+                        } else if ( ref_vel < MAX_ACC ) {
+                            ref_vel = MAX_ACC;
+                        }
 
-                        vector<double> xy = getXY(next_s, next_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-                        next_x_vals.push_back(xy[0]);
-                        next_y_vals.push_back(xy[1]);
-						//next_x_vals.push_back(car_x+(dist_inc*i)*cos(deg2rad(car_yaw)));
-						//next_y_vals.push_back(car_y+(dist_inc*i)*sin(deg2rad(car_yaw)));
+                        //
+                        // N * .02 * vel = target_dist
+                        // .02 = 20ms
+                        // 2.24 ( 1m/s = 2.24mph)
+                        double N = (target_dist/(.02*ref_vel/2.24));
+                        double x_point = x_add_on + (target_x)/N;
+                        double y_point = s(x_point); // 使用 spline 產生新的y
+
+                        x_add_on = x_point;
+
+                        double x_ref = x_point;
+                        double y_ref = y_point;
+
+                        x_point = (x_ref * cos(ref_yaw) - y_ref * sin(ref_yaw));
+                        y_point = (x_ref * sin(ref_yaw) + y_ref * cos(ref_yaw));
+
+                        // Step. convert local to global map.
+                        x_point += ref_x;
+                        y_point += ref_y;
+
+                        // Step . fill the trajectory
+                        next_x_vals.push_back(x_point);
+                        next_y_vals.push_back(y_point);
 					}
-					// End
+
+                    json msgJson;
 
 					msgJson["next_x"] = next_x_vals;
 					msgJson["next_y"] = next_y_vals;
