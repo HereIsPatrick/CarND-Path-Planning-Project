@@ -1,11 +1,78 @@
 # CarND-Path-Planning-Project
 Self-Driving Car Engineer Nanodegree Program
    
-### Simulator.
-You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).
+[image1]: images/11_07miles.png "11_07miles"
 
 ### Goals
 In this project your goal is to safely navigate around a virtual highway with other traffic that is driving +-10 MPH of the 50 MPH speed limit. You will be provided the car's localization and sensor fusion data, there is also a sparse map list of waypoints around the highway. The car should try to go as close as possible to the 50 MPH speed limit, which means passing slower traffic when possible, note that other cars will try to change lanes too. The car should avoid hitting other cars at all cost as well as driving inside of the marked road lanes at all times, unless going from one lane to another. The car should be able to make one complete loop around the 6946m highway. Since the car is trying to go 50 MPH, it should take a little over 5 minutes to complete 1 loop. Also the car should not experience total acceleration over 10 m/s^2 and jerk that is greater than 10 m/s^3.
+
+# Rubric Point
+## Compilation
+The code compiles correctly.
+
+## Valid Trajectories
+
+### The car is able to drive at least 4.32 miles without incident..
+The algorithm works fine. I can drive it in simulator at 11.07 miles. And It jerk at 11.09 miles. 
+![alt text][image1]
+
+### The car drives according to the speed limit.
+In main.cpp, I had speed limit with 49.5MPH in line 310.
+No speed limit warning message.
+
+### Max Acceleration and Jerk are not Exceeded.
+I had one jerk at 11.09 miles.
+Jerk warning message was show.
+
+### Car does not have collisions.
+No collisions.
+
+### The car stays in its lane, except for the time between changing lanes.
+The car always stay in its lane. When other vehicle was ahead in 30 meters. I'll change lane.
+
+
+### The car is able to change lanes
+The car can change lane. If slow car was ahead in 30 meters, I'll change lane.
+If the lane that I wanna change, I'll consider new lane space more than 30 meters ahead.
+And 5 meters behind.
+
+## Reflection
+I watch the Path Planning Project Q&A many times. Reuse codes from Aaron Brown.
+Thanks Aaron.
+
+We have to do 3 parts for Path Planning.
+
+### Prediction
+	In main.cpp(line 250-306) is prediction part.
+	Sensor_fusion always send 12 vehicles data(speed, id, s and d) to us.
+	I can use it to know which lane was occupied by vehicle.
+	Any vehicle in my ahead, left and right are important information that I need to know in predition part.
+ 
+### Behavior Planning
+	In main.cpp(line 308-329) is behavior planning part.
+	If a vehicle ahead in 30 meters, I'll make decision to change lane.
+	If I'm in center lane, first one consideration is left lane, second is right lane.
+	If I'm in left lane, only one possibility does go right lane.
+	If in right lane, the only choice is left lane, back to center lane.
+	All above considerations are avoid collision.
+
+### Trajectory
+	In main.cpp(line 331-446) is trajectory part.
+	1. Get 2 previous waypoints, if we don't have, generate from current car position.
+	2. Get 3 future waypoints, from current car position s, addon 30, 60 and 90.
+	3. We have 5 waypoints tile now, to create spline.
+	4. We create new trajectory(next_x_vals and next_y_vals), fill path points from previous path for continuity.
+	5. Generate new points via spline to fill trajectory as above.
+	PS:Trajectory only have 50 points(include previous and new) 
+	
+	6. Send Trajectory data to simulator.
+
+# Demo
+[![Path Planning](http://img.youtube.com/vi/Mwyx6yqqJsc/0.jpg)](https://www.youtube.com/watch?v=Mwyx6yqqJsc
+ "Path Planning")
+
+### Simulator.
+You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).
 
 #### The map of the highway is in data/highway_map.txt
 Each waypoint in the list contains  [x,y,s,dx,dy] values. x and y are the waypoint's map coordinate position, the s value is the distance along the road to get to that waypoint in meters, the dx and dy values define the unit normal vector pointing outward of the highway loop.
@@ -135,6 +202,5 @@ that's just a guess.
 One last note here: regardless of the IDE used, every submitted project must
 still be compilable with cmake and make./
 
-## How to write a README
-A well written README file can enhance your project and portfolio.  Develop your abilities to create professional README files by completing [this free course](https://www.udacity.com/course/writing-readmes--ud777).
+
 
